@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "comicsd": {
+      "command": "/path/to/your/comicsd",
+      "args": ["mcp"],
+      "env": {},
+      "description": "Comic downloader with search and download capabilities for manhuagui.com"
+    }
+  }
+}
