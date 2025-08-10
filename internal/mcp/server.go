@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
+	"sync"
+	"sync/atomic"
 
 	"comicsd/internal/downloader"
 	"comicsd/internal/epub"
@@ -36,6 +39,21 @@ type DownloadComicArgs struct {
 	Title      string   `json:"title" jsonschema:"required,description=Comic title for filename"`
 }
 
+type pageTask struct {
+	chapterID string
+	pageID    string
+	index     int
+}
+
+func workerCount() int {
+	if v := os.Getenv("COMICSD_WORKERS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 4
+}
+
 // MCPServer wraps the MCP functionality
 type MCPServer struct {
 	server *mcp_golang.Server
@@ -46,19 +64,19 @@ func NewMCPServer() *MCPServer {
 	// Add debug output to stderr
 	log.SetOutput(os.Stderr)
 	log.Println("Creating MCP server...")
-	
+
 	transport := stdio.NewStdioServerTransport()
 	server := mcp_golang.NewServer(transport)
-	
+
 	mcpServer := &MCPServer{
 		server: server,
 	}
-	
+
 	// Register tools
 	log.Println("Registering MCP tools...")
 	mcpServer.registerTools()
 	log.Println("MCP server creation complete")
-	
+
 	return mcpServer
 }
 
@@ -74,8 +92,8 @@ func (m *MCPServer) registerTools() {
 	if err != nil {
 		log.Printf("Failed to register search_comics tool: %v", err)
 	}
-	
-	// Get comic info tool  
+
+	// Get comic info tool
 	log.Println("Registering get_comic_info tool...")
 	err = m.server.RegisterTool(
 		"get_comic_info",
@@ -85,8 +103,7 @@ func (m *MCPServer) registerTools() {
 	if err != nil {
 		log.Printf("Failed to register get_comic_info tool: %v", err)
 	}
-	
-	
+
 	log.Println("All tools registered successfully")
 }
 
@@ -114,7 +131,7 @@ func (m *MCPServer) searchComics(args SearchComicsArgs) (*mcp_golang.ToolRespons
 
 	// Also return structured data
 	jsonData, _ := json.MarshalIndent(results, "", "  ")
-	
+
 	return mcp_golang.NewToolResponse(
 		mcp_golang.NewTextContent(responseText),
 		mcp_golang.NewTextContent(fmt.Sprintf("Raw JSON data:\n```json\n%s\n```", string(jsonData))),
@@ -143,7 +160,7 @@ func (m *MCPServer) getComicInfo(args GetComicInfoArgs) (*mcp_golang.ToolRespons
 		responseText += fmt.Sprintf("Status: %s\n", comicInfo.Status)
 	}
 	responseText += fmt.Sprintf("Total Chapters: %d\n\n", len(comicInfo.Chapters))
-	
+
 	// List first 10 chapters as examples
 	responseText += "Recent Chapters:\n"
 	limit := len(comicInfo.Chapters)
@@ -154,14 +171,14 @@ func (m *MCPServer) getComicInfo(args GetComicInfoArgs) (*mcp_golang.ToolRespons
 		chapter := comicInfo.Chapters[i]
 		responseText += fmt.Sprintf("  %d. [%s] %s\n", i+1, chapter.ID, chapter.Title)
 	}
-	
+
 	if len(comicInfo.Chapters) > 10 {
 		responseText += fmt.Sprintf("  ... and %d more chapters\n", len(comicInfo.Chapters)-10)
 	}
 
 	// Return structured data too
 	jsonData, _ := json.MarshalIndent(comicInfo, "", "  ")
-	
+
 	return mcp_golang.NewToolResponse(
 		mcp_golang.NewTextContent(responseText),
 		mcp_golang.NewTextContent(fmt.Sprintf("Complete data (JSON):\n```json\n%s\n```", string(jsonData))),
@@ -191,7 +208,7 @@ func (m *MCPServer) downloadComic(args DownloadComicArgs) (*mcp_golang.ToolRespo
 	defer file.Close()
 
 	var responseText string
-	
+
 	if args.Format == "cbz" {
 		err = m.downloadToCBZ(ctx, args, file)
 		if err != nil {
@@ -216,26 +233,90 @@ func (m *MCPServer) downloadToCBZ(ctx context.Context, args DownloadComicArgs, f
 	cbz := zip.NewWriter(file)
 	defer cbz.Close()
 
-	page := 0
+	// Build page tasks
+	var tasks []pageTask
 	for chn, chapterID := range args.ChapterIDs {
-		log.Printf("Downloading chapter %s (%d/%d)", chapterID, chn+1, len(args.ChapterIDs))
+		log.Printf("Preparing chapter %s (%d/%d)", chapterID, chn+1, len(args.ChapterIDs))
 		cc := downloader.NewDownload(ctx, args.ComicID, chapterID)
-
-		for n := range cc.Pages {
-			log.Printf("Downloading page %d/%d/%d", n, len(cc.Pages), chn)
-			w, err := cbz.Create(fmt.Sprintf("%d.jpg", page))
-			if err != nil {
-				return err
-			}
-
-			err = cc.DownloadPageTo(cc.Pages[n], w)
-			if err != nil {
-				return err
-			}
-			page++
+		for _, p := range cc.Pages {
+			tasks = append(tasks, pageTask{chapterID: chapterID, pageID: p, index: len(tasks)})
 		}
 	}
-	
+
+	total := len(tasks)
+	if total == 0 {
+		return nil
+	}
+
+	workerCnt := workerCount()
+	log.Printf("Starting %d workers for %d pages", workerCnt, total)
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	results := make([][]byte, total)
+	taskCh := make(chan pageTask)
+	errCh := make(chan error, 1)
+	var wg sync.WaitGroup
+	var done int32
+
+	for i := 0; i < workerCnt; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			wctx, wcancel := chromedp.NewContext(ctx)
+			defer wcancel()
+			dlMap := make(map[string]*downloader.ComicsDL)
+			for t := range taskCh {
+				if ctx.Err() != nil {
+					return
+				}
+				dl, ok := dlMap[t.chapterID]
+				if !ok {
+					dl = downloader.NewDownload(wctx, args.ComicID, t.chapterID)
+					dlMap[t.chapterID] = dl
+				}
+				var buf bytes.Buffer
+				if err := dl.DownloadPageTo(t.pageID, &buf); err != nil {
+					select {
+					case errCh <- err:
+					default:
+					}
+					cancel()
+					return
+				}
+				results[t.index] = buf.Bytes()
+				completed := atomic.AddInt32(&done, 1)
+				log.Printf("Worker %d downloaded page %d/%d", id, completed, total)
+			}
+		}(i + 1)
+	}
+
+	go func() {
+		for _, t := range tasks {
+			taskCh <- t
+		}
+		close(taskCh)
+	}()
+
+	wg.Wait()
+
+	select {
+	case err := <-errCh:
+		return err
+	default:
+	}
+
+	for i, data := range results {
+		w, err := cbz.Create(fmt.Sprintf("%d.jpg", i))
+		if err != nil {
+			return err
+		}
+		if _, err := w.Write(data); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -244,50 +325,106 @@ func (m *MCPServer) downloadToEPUB(ctx context.Context, args DownloadComicArgs, 
 	epubWriter := epub.NewEPUBWriter(file, args.Title)
 	defer epubWriter.Close()
 
-	page := 0
+	// Build page tasks
+	var tasks []pageTask
 	for chn, chapterID := range args.ChapterIDs {
-		log.Printf("Downloading chapter %s (%d/%d)", chapterID, chn+1, len(args.ChapterIDs))
+		log.Printf("Preparing chapter %s (%d/%d)", chapterID, chn+1, len(args.ChapterIDs))
 		cc := downloader.NewDownload(ctx, args.ComicID, chapterID)
-
-		for n := range cc.Pages {
-			log.Printf("Downloading page %d/%d/%d", n, len(cc.Pages), chn)
-			
-			// Download image data to memory
-			var buf bytes.Buffer
-			err := cc.DownloadPageTo(cc.Pages[n], &buf)
-			if err != nil {
-				return err
-			}
-
-			// Add page to EPUB
-			filename := fmt.Sprintf("%d.jpg", page)
-			err = epubWriter.AddPage(filename, buf.Bytes())
-			if err != nil {
-				return err
-			}
-			page++
+		for _, p := range cc.Pages {
+			tasks = append(tasks, pageTask{chapterID: chapterID, pageID: p, index: len(tasks)})
 		}
 	}
-	
+
+	total := len(tasks)
+	if total == 0 {
+		return nil
+	}
+
+	workerCnt := workerCount()
+	log.Printf("Starting %d workers for %d pages", workerCnt, total)
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	results := make([][]byte, total)
+	taskCh := make(chan pageTask)
+	errCh := make(chan error, 1)
+	var wg sync.WaitGroup
+	var done int32
+
+	for i := 0; i < workerCnt; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			wctx, wcancel := chromedp.NewContext(ctx)
+			defer wcancel()
+			dlMap := make(map[string]*downloader.ComicsDL)
+			for t := range taskCh {
+				if ctx.Err() != nil {
+					return
+				}
+				dl, ok := dlMap[t.chapterID]
+				if !ok {
+					dl = downloader.NewDownload(wctx, args.ComicID, t.chapterID)
+					dlMap[t.chapterID] = dl
+				}
+				var buf bytes.Buffer
+				if err := dl.DownloadPageTo(t.pageID, &buf); err != nil {
+					select {
+					case errCh <- err:
+					default:
+					}
+					cancel()
+					return
+				}
+				results[t.index] = buf.Bytes()
+				completed := atomic.AddInt32(&done, 1)
+				log.Printf("Worker %d downloaded page %d/%d", id, completed, total)
+			}
+		}(i + 1)
+	}
+
+	go func() {
+		for _, t := range tasks {
+			taskCh <- t
+		}
+		close(taskCh)
+	}()
+
+	wg.Wait()
+
+	select {
+	case err := <-errCh:
+		return err
+	default:
+	}
+
+	for i, data := range results {
+		filename := fmt.Sprintf("%d.jpg", i)
+		if err := epubWriter.AddPage(filename, data); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
 // Serve starts the MCP server
 func (m *MCPServer) Serve() error {
 	log.Println("Starting MCP server...")
-	
+
 	// Add recovery to catch any panics
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("MCP server panic: %v", r)
 		}
 	}()
-	
+
 	err := m.server.Serve()
 	if err != nil {
 		log.Printf("MCP server error: %v", err)
 	}
-	
+
 	log.Println("MCP server stopped")
 	return err
 }
