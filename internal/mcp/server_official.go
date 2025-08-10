@@ -145,7 +145,7 @@ func getComicInfoOfficial(ctx context.Context, cc *mcp.ServerSession, params *mc
 
 // generateConfigOfficial implements config generation using the official SDK
 func generateConfigOfficial(ctx context.Context, cc *mcp.ServerSession, params *mcp.CallToolParamsFor[GenerateConfigParams]) (*mcp.CallToolResultFor[any], error) {
-	log.Printf("Generate config called with comic ID: %s, chapters: %v, format: %s", 
+	log.Printf("Generate config called with comic ID: %s, chapters: %v, format: %s",
 		params.Arguments.ComicID, params.Arguments.Chapters, params.Arguments.Format)
 
 	// Validate format
@@ -176,7 +176,7 @@ func generateConfigOfficial(ctx context.Context, cc *mcp.ServerSession, params *
 	tomlConfig.WriteString(fmt.Sprintf("[%s]\n", params.Arguments.ConfigName))
 	tomlConfig.WriteString(fmt.Sprintf("title = \"%s\"\n", params.Arguments.Title))
 	tomlConfig.WriteString(fmt.Sprintf("mangaid = \"%s\"\n", params.Arguments.ComicID))
-	
+
 	// Format chapters array
 	tomlConfig.WriteString("chapters = [")
 	for i, chapter := range params.Arguments.Chapters {
@@ -186,7 +186,7 @@ func generateConfigOfficial(ctx context.Context, cc *mcp.ServerSession, params *
 		tomlConfig.WriteString(fmt.Sprintf("\"%s\"", chapter))
 	}
 	tomlConfig.WriteString("]\n")
-	
+
 	// Add format if not default
 	if format != "cbz" {
 		tomlConfig.WriteString(fmt.Sprintf("format = \"%s\"\n", format))
@@ -218,7 +218,7 @@ func generateConfigOfficial(ctx context.Context, cc *mcp.ServerSession, params *
 
 // summarizeComicOfficial implements comic summarization (downloading) using the official SDK
 func summarizeComicOfficial(ctx context.Context, cc *mcp.ServerSession, params *mcp.CallToolParamsFor[SummarizeParams]) (*mcp.CallToolResultFor[any], error) {
-	log.Printf("Summarize called with comic ID: %s, chapters: %v, format: %s", 
+	log.Printf("Summarize called with comic ID: %s, chapters: %v, format: %s",
 		params.Arguments.ComicID, params.Arguments.Chapters, params.Arguments.Format)
 
 	// Validate format
@@ -254,7 +254,7 @@ func summarizeComicOfficial(ctx context.Context, cc *mcp.ServerSession, params *
 	defer file.Close()
 
 	var responseText string
-	
+
 	if format == "cbz" {
 		err = summarizeToCBZ(chromectx, params.Arguments, file)
 		if err != nil {
@@ -282,7 +282,10 @@ func summarizeToCBZ(ctx context.Context, params SummarizeParams, file *os.File) 
 	page := 0
 	for chn, chapterID := range params.Chapters {
 		log.Printf("Summarizing chapter %s (%d/%d)", chapterID, chn+1, len(params.Chapters))
-		cc := downloader.NewDownload(ctx, params.ComicID, chapterID)
+		cc, err := downloader.NewDownload(ctx, params.ComicID, chapterID)
+		if err != nil {
+			return err
+		}
 
 		for n := range cc.Pages {
 			log.Printf("Summarizing page %d/%d/%d", n, len(cc.Pages), chn)
@@ -298,7 +301,7 @@ func summarizeToCBZ(ctx context.Context, params SummarizeParams, file *os.File) 
 			page++
 		}
 	}
-	
+
 	return nil
 }
 
@@ -310,11 +313,14 @@ func summarizeToEPUB(ctx context.Context, params SummarizeParams, file *os.File)
 	page := 0
 	for chn, chapterID := range params.Chapters {
 		log.Printf("Summarizing chapter %s (%d/%d)", chapterID, chn+1, len(params.Chapters))
-		cc := downloader.NewDownload(ctx, params.ComicID, chapterID)
+		cc, err := downloader.NewDownload(ctx, params.ComicID, chapterID)
+		if err != nil {
+			return err
+		}
 
 		for n := range cc.Pages {
 			log.Printf("Summarizing page %d/%d/%d", n, len(cc.Pages), chn)
-			
+
 			// Download image data to memory
 			var buf bytes.Buffer
 			err := cc.DownloadPageTo(cc.Pages[n], &buf)
@@ -331,7 +337,7 @@ func summarizeToEPUB(ctx context.Context, params SummarizeParams, file *os.File)
 			page++
 		}
 	}
-	
+
 	return nil
 }
 
@@ -339,13 +345,13 @@ func summarizeToEPUB(ctx context.Context, params SummarizeParams, file *os.File)
 func ServeOfficial() error {
 	log.Println("Starting official MCP server...")
 	server := NewOfficialMCPServer()
-	
+
 	transport := mcp.NewStdioTransport()
 	err := server.Run(context.Background(), transport)
 	if err != nil {
 		log.Printf("Official MCP server error: %v", err)
 	}
-	
+
 	log.Println("Official MCP server stopped")
 	return err
 }
