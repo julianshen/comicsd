@@ -22,7 +22,10 @@ func TestGetPages(t *testing.T) {
 	}
 	cbz := zip.NewWriter(file)
 	defer cbz.Close()
-	cc := downloader.NewDownload(ctx, "26964", "718179")
+	cc, err := downloader.NewDownload(ctx, "26964", "718179")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for n := range cc.Pages {
 		log.Printf("Downloading page %d\n", n)
 		w, err := cbz.Create(fmt.Sprintf("%d.jpg", n))

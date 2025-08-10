@@ -46,19 +46,19 @@ func NewMCPServer() *MCPServer {
 	// Add debug output to stderr
 	log.SetOutput(os.Stderr)
 	log.Println("Creating MCP server...")
-	
+
 	transport := stdio.NewStdioServerTransport()
 	server := mcp_golang.NewServer(transport)
-	
+
 	mcpServer := &MCPServer{
 		server: server,
 	}
-	
+
 	// Register tools
 	log.Println("Registering MCP tools...")
 	mcpServer.registerTools()
 	log.Println("MCP server creation complete")
-	
+
 	return mcpServer
 }
 
@@ -74,8 +74,8 @@ func (m *MCPServer) registerTools() {
 	if err != nil {
 		log.Printf("Failed to register search_comics tool: %v", err)
 	}
-	
-	// Get comic info tool  
+
+	// Get comic info tool
 	log.Println("Registering get_comic_info tool...")
 	err = m.server.RegisterTool(
 		"get_comic_info",
@@ -85,8 +85,7 @@ func (m *MCPServer) registerTools() {
 	if err != nil {
 		log.Printf("Failed to register get_comic_info tool: %v", err)
 	}
-	
-	
+
 	log.Println("All tools registered successfully")
 }
 
@@ -114,7 +113,7 @@ func (m *MCPServer) searchComics(args SearchComicsArgs) (*mcp_golang.ToolRespons
 
 	// Also return structured data
 	jsonData, _ := json.MarshalIndent(results, "", "  ")
-	
+
 	return mcp_golang.NewToolResponse(
 		mcp_golang.NewTextContent(responseText),
 		mcp_golang.NewTextContent(fmt.Sprintf("Raw JSON data:\n```json\n%s\n```", string(jsonData))),
@@ -143,7 +142,7 @@ func (m *MCPServer) getComicInfo(args GetComicInfoArgs) (*mcp_golang.ToolRespons
 		responseText += fmt.Sprintf("Status: %s\n", comicInfo.Status)
 	}
 	responseText += fmt.Sprintf("Total Chapters: %d\n\n", len(comicInfo.Chapters))
-	
+
 	// List first 10 chapters as examples
 	responseText += "Recent Chapters:\n"
 	limit := len(comicInfo.Chapters)
@@ -154,14 +153,14 @@ func (m *MCPServer) getComicInfo(args GetComicInfoArgs) (*mcp_golang.ToolRespons
 		chapter := comicInfo.Chapters[i]
 		responseText += fmt.Sprintf("  %d. [%s] %s\n", i+1, chapter.ID, chapter.Title)
 	}
-	
+
 	if len(comicInfo.Chapters) > 10 {
 		responseText += fmt.Sprintf("  ... and %d more chapters\n", len(comicInfo.Chapters)-10)
 	}
 
 	// Return structured data too
 	jsonData, _ := json.MarshalIndent(comicInfo, "", "  ")
-	
+
 	return mcp_golang.NewToolResponse(
 		mcp_golang.NewTextContent(responseText),
 		mcp_golang.NewTextContent(fmt.Sprintf("Complete data (JSON):\n```json\n%s\n```", string(jsonData))),
@@ -191,7 +190,7 @@ func (m *MCPServer) downloadComic(args DownloadComicArgs) (*mcp_golang.ToolRespo
 	defer file.Close()
 
 	var responseText string
-	
+
 	if args.Format == "cbz" {
 		err = m.downloadToCBZ(ctx, args, file)
 		if err != nil {
@@ -219,7 +218,10 @@ func (m *MCPServer) downloadToCBZ(ctx context.Context, args DownloadComicArgs, f
 	page := 0
 	for chn, chapterID := range args.ChapterIDs {
 		log.Printf("Downloading chapter %s (%d/%d)", chapterID, chn+1, len(args.ChapterIDs))
-		cc := downloader.NewDownload(ctx, args.ComicID, chapterID)
+		cc, err := downloader.NewDownload(ctx, args.ComicID, chapterID)
+		if err != nil {
+			return err
+		}
 
 		for n := range cc.Pages {
 			log.Printf("Downloading page %d/%d/%d", n, len(cc.Pages), chn)
@@ -235,7 +237,7 @@ func (m *MCPServer) downloadToCBZ(ctx context.Context, args DownloadComicArgs, f
 			page++
 		}
 	}
-	
+
 	return nil
 }
 
@@ -247,11 +249,14 @@ func (m *MCPServer) downloadToEPUB(ctx context.Context, args DownloadComicArgs, 
 	page := 0
 	for chn, chapterID := range args.ChapterIDs {
 		log.Printf("Downloading chapter %s (%d/%d)", chapterID, chn+1, len(args.ChapterIDs))
-		cc := downloader.NewDownload(ctx, args.ComicID, chapterID)
+		cc, err := downloader.NewDownload(ctx, args.ComicID, chapterID)
+		if err != nil {
+			return err
+		}
 
 		for n := range cc.Pages {
 			log.Printf("Downloading page %d/%d/%d", n, len(cc.Pages), chn)
-			
+
 			// Download image data to memory
 			var buf bytes.Buffer
 			err := cc.DownloadPageTo(cc.Pages[n], &buf)
@@ -268,26 +273,26 @@ func (m *MCPServer) downloadToEPUB(ctx context.Context, args DownloadComicArgs, 
 			page++
 		}
 	}
-	
+
 	return nil
 }
 
 // Serve starts the MCP server
 func (m *MCPServer) Serve() error {
 	log.Println("Starting MCP server...")
-	
+
 	// Add recovery to catch any panics
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("MCP server panic: %v", r)
 		}
 	}()
-	
+
 	err := m.server.Serve()
 	if err != nil {
 		log.Printf("MCP server error: %v", err)
 	}
-	
+
 	log.Println("MCP server stopped")
 	return err
 }
