@@ -21,7 +21,7 @@ type ComicsDL struct {
 	Pages  []string
 }
 
-func NewDownload(ctx context.Context, id1, id2 string) *ComicsDL {
+func NewDownload(ctx context.Context, id1, id2 string) (*ComicsDL, error) {
 	baseUrl := fmt.Sprintf("https://tw.manhuagui.com/comic/%s/%s.html", id1, id2)
 	dl := &ComicsDL{
 		baseUrl,
@@ -43,19 +43,23 @@ func NewDownload(ctx context.Context, id1, id2 string) *ComicsDL {
 		}
 	})
 
-	chromedp.Run(ctx,
+	if err := chromedp.Run(ctx,
 		chromedp.Navigate(baseUrl),
 		chromedp.WaitVisible(`#mangaBox`),
-	)
+	); err != nil {
+		return nil, err
+	}
 
-	dl.GetPages()
+	if err := dl.GetPages(); err != nil {
+		return nil, err
+	}
 
-	return dl
+	return dl, nil
 }
 
-func (dl *ComicsDL) GetPages() {
+func (dl *ComicsDL) GetPages() error {
 	var nodes []*cdp.Node
-	chromedp.Run(dl.ctx,
+	if err := chromedp.Run(dl.ctx,
 		chromedp.Nodes("#pageSelect", &nodes),
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			dom.RequestChildNodes(nodes[0].NodeID).WithDepth(1).Do(ctx)
@@ -66,7 +70,10 @@ func (dl *ComicsDL) GetPages() {
 			}
 			return nil
 		}),
-	)
+	); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (dl *ComicsDL) findRequestID(src string) (network.RequestID, error) {

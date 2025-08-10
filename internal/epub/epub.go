@@ -4,14 +4,22 @@ import (
 	"archive/zip"
 	"fmt"
 	"io"
+	"mime"
+	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 )
 
+type imageRef struct {
+	filename string
+	mimeType string
+}
+
 type EPUBWriter struct {
 	zipWriter *zip.Writer
 	pages     []string
-	images    []string
+	images    []imageRef
 	title     string
 	pageCount int
 }
@@ -21,7 +29,7 @@ func NewEPUBWriter(writer io.Writer, title string) *EPUBWriter {
 		zipWriter: zip.NewWriter(writer),
 		title:     title,
 		pages:     make([]string, 0),
-		images:    make([]string, 0),
+		images:    make([]imageRef, 0),
 		pageCount: 0,
 	}
 }
@@ -56,6 +64,11 @@ func (e *EPUBWriter) AddPage(filename string, data []byte) error {
 
 	if _, err := imageFile.Write(data); err != nil {
 		return err
+	}
+
+	mimeType := mime.TypeByExtension(strings.ToLower(filepath.Ext(filename)))
+	if mimeType == "" {
+		mimeType = http.DetectContentType(data)
 	}
 
 	// Create XHTML page for this image
@@ -122,7 +135,7 @@ func (e *EPUBWriter) AddPage(filename string, data []byte) error {
 	}
 
 	e.pages = append(e.pages, xhtmlFilename)
-	e.images = append(e.images, filename)
+	e.images = append(e.images, imageRef{filename: filename, mimeType: mimeType})
 	e.pageCount++
 
 	return nil
@@ -169,8 +182,8 @@ func (e *EPUBWriter) writeOPF() error {
 
 		manifestItems.WriteString(fmt.Sprintf(`        <item id="%s" href="%s" media-type="application/xhtml+xml"/>
 `, pageId, page))
-		manifestItems.WriteString(fmt.Sprintf(`        <item id="%s" href="images/%s" media-type="image/jpeg"/>
-`, imageId, e.images[i]))
+		manifestItems.WriteString(fmt.Sprintf(`        <item id="%s" href="images/%s" media-type="%s"/>
+`, imageId, e.images[i].filename, e.images[i].mimeType))
 
 		spineItems.WriteString(fmt.Sprintf(`        <itemref idref="%s"/>
 `, pageId))

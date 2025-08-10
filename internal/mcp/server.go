@@ -237,7 +237,10 @@ func (m *MCPServer) downloadToCBZ(ctx context.Context, args DownloadComicArgs, f
 	var tasks []pageTask
 	for chn, chapterID := range args.ChapterIDs {
 		log.Printf("Preparing chapter %s (%d/%d)", chapterID, chn+1, len(args.ChapterIDs))
-		cc := downloader.NewDownload(ctx, args.ComicID, chapterID)
+		cc, err := downloader.NewDownload(ctx, args.ComicID, chapterID)
+		if err != nil {
+			return err
+		}
 		for _, p := range cc.Pages {
 			tasks = append(tasks, pageTask{chapterID: chapterID, pageID: p, index: len(tasks)})
 		}
@@ -273,7 +276,16 @@ func (m *MCPServer) downloadToCBZ(ctx context.Context, args DownloadComicArgs, f
 				}
 				dl, ok := dlMap[t.chapterID]
 				if !ok {
-					dl = downloader.NewDownload(wctx, args.ComicID, t.chapterID)
+					var err error
+					dl, err = downloader.NewDownload(wctx, args.ComicID, t.chapterID)
+					if err != nil {
+						select {
+						case errCh <- err:
+						default:
+						}
+						cancel()
+						return
+					}
 					dlMap[t.chapterID] = dl
 				}
 				var buf bytes.Buffer
@@ -329,7 +341,10 @@ func (m *MCPServer) downloadToEPUB(ctx context.Context, args DownloadComicArgs, 
 	var tasks []pageTask
 	for chn, chapterID := range args.ChapterIDs {
 		log.Printf("Preparing chapter %s (%d/%d)", chapterID, chn+1, len(args.ChapterIDs))
-		cc := downloader.NewDownload(ctx, args.ComicID, chapterID)
+		cc, err := downloader.NewDownload(ctx, args.ComicID, chapterID)
+		if err != nil {
+			return err
+		}
 		for _, p := range cc.Pages {
 			tasks = append(tasks, pageTask{chapterID: chapterID, pageID: p, index: len(tasks)})
 		}
@@ -365,7 +380,16 @@ func (m *MCPServer) downloadToEPUB(ctx context.Context, args DownloadComicArgs, 
 				}
 				dl, ok := dlMap[t.chapterID]
 				if !ok {
-					dl = downloader.NewDownload(wctx, args.ComicID, t.chapterID)
+					var err error
+					dl, err = downloader.NewDownload(wctx, args.ComicID, t.chapterID)
+					if err != nil {
+						select {
+						case errCh <- err:
+						default:
+						}
+						cancel()
+						return
+					}
 					dlMap[t.chapterID] = dl
 				}
 				var buf bytes.Buffer

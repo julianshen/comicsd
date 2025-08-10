@@ -8,15 +8,15 @@ import (
 	"testing"
 )
 
-// Test that EPUBWriter writes image filenames correctly in the manifest
-func TestEPUBWriterManifestUsesFilenames(t *testing.T) {
+// Test that EPUBWriter records filenames and MIME types correctly in the manifest
+func TestEPUBWriterManifestRecordsMimeTypes(t *testing.T) {
 	var buf bytes.Buffer
 	writer := NewEPUBWriter(&buf, "Test Title")
 
 	if err := writer.AddPage("img1.png", []byte("data1")); err != nil {
 		t.Fatalf("AddPage img1 failed: %v", err)
 	}
-	if err := writer.AddPage("img2.png", []byte("data2")); err != nil {
+	if err := writer.AddPage("img2.jpg", []byte("data2")); err != nil {
 		t.Fatalf("AddPage img2 failed: %v", err)
 	}
 
@@ -50,10 +50,10 @@ func TestEPUBWriterManifestUsesFilenames(t *testing.T) {
 		t.Fatalf("content.opf not found in EPUB")
 	}
 
-	if !strings.Contains(contentOpf, "href=\"images/img1.png\"") {
-		t.Errorf("manifest missing img1.png: %s", contentOpf)
+	if !strings.Contains(contentOpf, "href=\"images/img1.png\" media-type=\"image/png\"") {
+		t.Errorf("manifest missing img1.png with image/png: %s", contentOpf)
 	}
-	if !strings.Contains(contentOpf, "href=\"images/img2.png\"") {
-		t.Errorf("manifest missing img2.png: %s", contentOpf)
+	if !strings.Contains(contentOpf, "href=\"images/img2.jpg\" media-type=\"image/jpeg\"") {
+		t.Errorf("manifest missing img2.jpg with image/jpeg: %s", contentOpf)
 	}
 }
