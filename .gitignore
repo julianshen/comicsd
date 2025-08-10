@@ -18,7 +18,7 @@
 go.work
 
 # Build output
-comicsd
+/comicsd
 /cmd/comicsd/comicsd
 
 # Downloaded comics
@@ -51,6 +51,5 @@ Thumbs.db
 test_*
 
 CLAUDE.md
-comicsd
 
 *.bak
