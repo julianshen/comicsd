@@ -105,6 +105,7 @@ func searchComicsOfficial(ctx context.Context, cc *mcp.ServerSession, params *mc
 	fetcher := info.NewComicInfoFetcher(chromectx)
 	results, err := fetcher.SearchComics(params.Arguments.Keyword)
 	if err != nil {
+		log.Printf("search comics error: %v", err)
 		return nil, fmt.Errorf("failed to search comics: %w", err)
 	}
 
@@ -129,6 +130,7 @@ func getComicInfoOfficial(ctx context.Context, cc *mcp.ServerSession, params *mc
 	fetcher := info.NewComicInfoFetcher(chromectx)
 	comicInfo, err := fetcher.GetComicInfo(params.Arguments.ComicID)
 	if err != nil {
+		log.Printf("get comic info error: %v", err)
 		return nil, fmt.Errorf("failed to get comic info: %w", err)
 	}
 

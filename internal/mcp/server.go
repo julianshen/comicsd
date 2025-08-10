@@ -97,6 +97,7 @@ func (m *MCPServer) searchComics(args SearchComicsArgs) (*mcp_golang.ToolRespons
 	fetcher := info.NewComicInfoFetcher(ctx)
 	results, err := fetcher.SearchComics(args.Keyword)
 	if err != nil {
+		log.Printf("search comics error: %v", err)
 		return nil, fmt.Errorf("failed to search comics: %w", err)
 	}
 
@@ -128,6 +129,7 @@ func (m *MCPServer) getComicInfo(args GetComicInfoArgs) (*mcp_golang.ToolRespons
 	fetcher := info.NewComicInfoFetcher(ctx)
 	comicInfo, err := fetcher.GetComicInfo(args.ComicID)
 	if err != nil {
+		log.Printf("get comic info error: %v", err)
 		return nil, fmt.Errorf("failed to get comic info: %w", err)
 	}
 
