@@ -11,6 +11,7 @@ import (
 type EPUBWriter struct {
 	zipWriter *zip.Writer
 	pages     []string
+	images    []string
 	title     string
 	pageCount int
 }
@@ -20,6 +21,7 @@ func NewEPUBWriter(writer io.Writer, title string) *EPUBWriter {
 		zipWriter: zip.NewWriter(writer),
 		title:     title,
 		pages:     make([]string, 0),
+		images:    make([]string, 0),
 		pageCount: 0,
 	}
 }
@@ -29,19 +31,19 @@ func (e *EPUBWriter) Close() error {
 	if err := e.writeMimeType(); err != nil {
 		return err
 	}
-	
+
 	if err := e.writeContainer(); err != nil {
 		return err
 	}
-	
+
 	if err := e.writeOPF(); err != nil {
 		return err
 	}
-	
+
 	if err := e.writeNCX(); err != nil {
 		return err
 	}
-	
+
 	return e.zipWriter.Close()
 }
 
@@ -51,20 +53,20 @@ func (e *EPUBWriter) AddPage(filename string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	
+
 	if _, err := imageFile.Write(data); err != nil {
 		return err
 	}
-	
+
 	// Create XHTML page for this image
 	pageNum := e.pageCount + 1
 	xhtmlFilename := fmt.Sprintf("page%d.xhtml", pageNum)
-	
+
 	xhtmlFile, err := e.zipWriter.Create(fmt.Sprintf("OEBPS/%s", xhtmlFilename))
 	if err != nil {
 		return err
 	}
-	
+
 	xhtmlContent := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml">
@@ -114,14 +116,15 @@ func (e *EPUBWriter) AddPage(filename string, data []byte) error {
     </div>
 </body>
 </html>`, pageNum, filename, pageNum)
-	
+
 	if _, err := xhtmlFile.Write([]byte(xhtmlContent)); err != nil {
 		return err
 	}
-	
+
 	e.pages = append(e.pages, xhtmlFilename)
+	e.images = append(e.images, filename)
 	e.pageCount++
-	
+
 	return nil
 }
 
@@ -139,14 +142,14 @@ func (e *EPUBWriter) writeContainer() error {
 	if err != nil {
 		return err
 	}
-	
+
 	content := `<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
     <rootfiles>
         <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
     </rootfiles>
 </container>`
-	
+
 	_, err = file.Write([]byte(content))
 	return err
 }
@@ -156,23 +159,23 @@ func (e *EPUBWriter) writeOPF() error {
 	if err != nil {
 		return err
 	}
-	
+
 	var manifestItems strings.Builder
 	var spineItems strings.Builder
-	
+
 	for i, page := range e.pages {
 		pageId := fmt.Sprintf("page%d", i+1)
 		imageId := fmt.Sprintf("img%d", i+1)
-		
+
 		manifestItems.WriteString(fmt.Sprintf(`        <item id="%s" href="%s" media-type="application/xhtml+xml"/>
 `, pageId, page))
-		manifestItems.WriteString(fmt.Sprintf(`        <item id="%s" href="images/%d.jpg" media-type="image/jpeg"/>
-`, imageId, i))
-		
+		manifestItems.WriteString(fmt.Sprintf(`        <item id="%s" href="images/%s" media-type="image/jpeg"/>
+`, imageId, e.images[i]))
+
 		spineItems.WriteString(fmt.Sprintf(`        <itemref idref="%s"/>
 `, pageId))
 	}
-	
+
 	content := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <package version="2.0" xmlns="http://www.idpf.org/2007/opf" unique-identifier="book-id">
     <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
@@ -189,7 +192,7 @@ func (e *EPUBWriter) writeOPF() error {
     <spine toc="ncx">
 %s    </spine>
 </package>`, e.title, e.title, time.Now().Format("2006-01-02"), manifestItems.String(), spineItems.String())
-	
+
 	_, err = file.Write([]byte(content))
 	return err
 }
@@ -199,7 +202,7 @@ func (e *EPUBWriter) writeNCX() error {
 	if err != nil {
 		return err
 	}
-	
+
 	var navPoints strings.Builder
 	for i, page := range e.pages {
 		navPoints.WriteString(fmt.Sprintf(`        <navPoint id="page%d" playOrder="%d">
@@ -210,7 +213,7 @@ func (e *EPUBWriter) writeNCX() error {
         </navPoint>
 `, i+1, i+1, i+1, page))
 	}
-	
+
 	content := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <ncx version="2005-1" xmlns="http://www.daisy.org/z3986/2005/ncx/">
     <head>
@@ -225,7 +228,7 @@ func (e *EPUBWriter) writeNCX() error {
     <navMap>
 %s    </navMap>
 </ncx>`, e.title, e.pageCount, e.pageCount, e.title, navPoints.String())
-	
+
 	_, err = file.Write([]byte(content))
 	return err
 }
